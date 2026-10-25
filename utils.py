@@ -31,7 +31,6 @@ async def download_image(url: str, save_path: str) -> None:
         await asyncio.to_thread(shutil.copyfile, source_path, save_path)
         return
 
-    url = url.replace("https://", "http://")
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status == 200:
