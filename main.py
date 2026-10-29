@@ -1,3 +1,5 @@
+import base64
+
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import filter
@@ -11,7 +13,7 @@ from astrbot.core.star.filter.permission import PermissionType
 from astrbot.core.star.star_tools import StarTools
 
 from .status import status_mapping
-from .utils import download_image, get_nickname
+from .utils import get_nickname
 
 
 class QQProfilePlugin(Star):
@@ -56,27 +58,35 @@ class QQProfilePlugin(Star):
             yield event.plain_result("仅管理员可以修改机器人头像")
             return
         chain = event.get_messages()
-        img_url = None
+        img_seg = None
         for seg in chain:
             if isinstance(seg, Comp.Image):
-                img_url = seg.url
+                img_seg = seg
                 break
-            elif isinstance(seg, Comp.Reply):
-                if seg.chain:
-                    for reply_seg in seg.chain:
-                        if isinstance(reply_seg, Comp.Image):
-                            img_url = reply_seg.url
-                            break
-        if not img_url:
+            elif isinstance(seg, Comp.Reply) and seg.chain:
+                for reply_seg in seg.chain:
+                    if isinstance(reply_seg, Comp.Image):
+                        img_seg = reply_seg
+                        break
+                if img_seg:
+                    break
+        if not img_seg:
             yield event.plain_result("需要引用一张图片")
             return
 
-        await event.bot.set_qq_avatar(file=img_url)
+        try:
+            img_b64 = await img_seg.convert_to_base64()
+        except Exception as e:
+            logger.error(f"图片转 base64 失败：{e}")
+            yield event.plain_result(f"图片读取失败：{e}")
+            return
+
+        await event.bot.set_qq_avatar(file=f"base64://{img_b64}")
         yield event.plain_result("我换头像啦~")
         if persona_id := await self.get_curr_persona_id(event):
             save_path = self.avatar_dir / f"{persona_id}.jpg"
             try:
-                await download_image(img_url, str(save_path))
+                save_path.write_bytes(base64.b64decode(img_b64))
                 logger.debug(f"头像已保存到：{str(save_path)}")
             except Exception as e:
                 logger.error(f"保存头像失败：{e}")
@@ -172,7 +182,10 @@ class QQProfilePlugin(Star):
             logger.debug(f"已同步bot的昵称为：{persona_id}")
             avatar_path = self.avatar_dir / f"{persona_id}.jpg"
             if avatar_path.exists():
-                await event.bot.set_qq_avatar(file=str(avatar_path))
+                # 协议端读不到本容器的路径，必须转 base64 传
+                await event.bot.set_qq_avatar(
+                    file="base64://" + base64.b64encode(avatar_path.read_bytes()).decode()
+                )
                 logger.debug(f"已同步bot的头像为：{str(avatar_path)}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
